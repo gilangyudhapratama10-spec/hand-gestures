@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pratama Projects: Hand Gestures </title>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: #0f0f13; color: #e8e8e8;
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  min-height: 100vh; display: flex; flex-direction: column;
+  align-items: center; padding: 24px 16px 48px;
+}
+h1 { font-size: 18px; font-weight: 500; letter-spacing: 0.08em; color: #a0c4ff; margin-bottom: 4px; text-transform: uppercase; }
+.subtitle { font-size: 12px; color: #555; margin-bottom: 18px; }
+
+#canvas-wrap {
+  position: relative; width: 100%; max-width: 640px;
+  border-radius: 14px; overflow: hidden;
+  border: 1px solid #2a2a3a; background: #000; aspect-ratio: 4/3;
+}
+#video  { width:100%; height:100%; object-fit:cover; display:block; transform:scaleX(-1); }
+#canvas { position:absolute; top:0; left:0; width:100%; height:100%; transform:scaleX(-1); }
+
+#speech-bubble {
+  position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%);
+  background: rgba(20,40,70,0.92); border: 1px solid #4a7fc1;
+  border-radius: 12px; padding: 10px 18px;
+  font-size: 14px; font-weight: 500; color: #c8deff;
+  white-space: nowrap; max-width: 90%; overflow: hidden; text-overflow: ellipsis;
+  display: none; animation: pop 0.2s ease;
+}
+@keyframes pop { from{opacity:0;transform:translateX(-50%) scale(0.9)} to{opacity:1;transform:translateX(-50%) scale(1)} }
+
+#overlay {
+  position:absolute; inset:0; display:flex; flex-direction:column;
+  align-items:center; justify-content:center; gap:14px; background:rgba(0,0,0,0.75);
+}
+#start-btn {
+  padding:12px 28px; border-radius:8px; border:1px solid #4a7fc1;
+  background:transparent; color:#a0c4ff; font-size:15px; cursor:pointer;
+}
+#start-btn:hover { background:rgba(74,127,193,0.2); }
+#loading-msg { color:#a0c4ff; font-size:14px; display:none; }
+#fps-badge,#hands-badge {
+  position:absolute; top:10px; font-size:11px; padding:3px 10px;
+  border-radius:99px; background:rgba(0,0,0,0.6); color:#aaa; display:none;
+}
+#fps-badge{right:10px;} #hands-badge{left:10px;}
+
+.info-row { display:flex; gap:10px; width:100%; max-width:640px; margin-top:14px; }
+.card { flex:1; background:#1a1a24; border:1px solid #2a2a3a; border-radius:10px; padding:12px 14px; min-width:0; }
+.card-label { font-size:11px; color:#555; text-transform:uppercase; letter-spacing:0.06em; margin-bottom:4px; }
+.card-value { font-size:15px; font-weight:500; color:#a0c4ff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+
+.section-title {
+  width:100%; max-width:640px;
+  font-size:11px; color:#555; text-transform:uppercase; letter-spacing:0.08em;
+  margin: 18px 0 8px;
+}
+.mapping-table { width:100%; max-width:640px; border-radius:12px; overflow:hidden; border:1px solid #2a2a3a; }
+.mapping-header {
+  display:grid; grid-template-columns:40px 140px 1fr 80px;
+  padding:8px 14px; background:#161620;
+  font-size:10px; color:#444; text-transform:uppercase; letter-spacing:0.08em;
+  border-bottom:1px solid #2a2a3a; gap:6px; align-items:center;
+}
+.mapping-row {
+  display:grid; grid-template-columns:40px 140px 1fr 80px;
+  align-items:center; padding:10px 14px;
+  border-bottom:1px solid #1e1e2a; background:#1a1a24;
+  transition:background 0.15s; gap:6px;
+}
+.mapping-row:last-child { border-bottom:none; }
+.mapping-row.active { background:#162a42; border-left:3px solid #4a7fc1; }
+.g-icon { font-size:20px; }
+.g-name { font-size:12px; color:#777; font-weight:500; }
+.mapping-row.active .g-name { color:#a0c4ff; }
+.g-file { font-size:11px; color:#555; font-style:italic; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.g-file.loaded  { color:#4caf7d; font-style:normal; }
+.g-file.missing { color:#c0504a; }
+.g-file.waiting { color:#e8a838; }
+.status-dot { width:8px; height:8px; border-radius:50%; background:#333; flex-shrink:0; }
+.status-dot.ok  { background:#4caf7d; }
+.status-dot.err { background:#c0504a; }
+
+/* Drop zone */
+.drop-zone {
+  width:100%; max-width:640px;
+  border:1.5px dashed #2a2a3a; border-radius:12px;
+  padding:20px; text-align:center; margin-top:10px; cursor:pointer;
+  transition:border-color 0.2s, background 0.2s;
+}
+.drop-zone:hover,.drop-zone.drag-over { border-color:#4a7fc1; background:rgba(74,127,193,0.05); }
+.drop-zone p { font-size:13px; color:#555; margin-bottom:5px; }
+.drop-zone small { font-size:11px; color:#3a3a4a; }
+.drop-zone label { cursor:pointer; color:#4a7fc1; }
+
+/* Settings */
+.settings-box { width:100%; max-width:640px; background:#1a1a24; border:1px solid #2a2a3a; border-radius:12px; padding:14px 16px; margin-top:10px; }
+.srow { display:flex; align-items:center; gap:10px; margin-bottom:8px; }
+.srow:last-child { margin-bottom:0; }
+.slabel { font-size:12px; color:#666; min-width:130px; }
+input[type=range] { flex:1; accent-color:#4a7fc1; }
+.sval { font-size:12px; color:#888; min-width:34px; text-align:right; }
+
+/* Info box */
+.info-box { width:100%; max-width:640px; background:#161a20; border:1px solid #2a3a2a; border-radius:12px; padding:14px 16px; margin-top:10px; }
+.info-box p { font-size:12px; color:#4a7a5a; line-height:1.8; }
+.info-box code { background:#0f1810; color:#6cba8a; padding:1px 6px; border-radius:4px; font-size:11px; }
+
+.hint { font-size:11px; color:#333; margin-top:14px; text-align:center; max-width:540px; line-height:1.7; }
+</style>
+</head>
+<body>
+
+<h1>Pratama Projects: Hand Gestures</h1>
+<p class="subtitle">Hand Gestures V.1</p>
+
+<div id="canvas-wrap">
+  <video id="video" playsinline muted autoplay></video>
+  <canvas id="canvas"></canvas>
+  <span id="fps-badge">0 fps</span>
+  <span id="hands-badge">0 tangan</span>
+  <div id="speech-bubble"></div>
+  <div id="overlay">
+    <div id="loading-msg">Memuat model AI...</div>
+    <button id="start-btn">&#128247; Aktifkan Kamera</button>
+  </div>
+</div>
+
+<div class="info-row">
+  <div class="card"><div class="card-label">Gesture</div><div class="card-value" id="g-gesture">–</div></div>
+  <div class="card"><div class="card-label">Jari</div><div class="card-value" id="g-fingers">–</div></div>
+  <div class="card"><div class="card-label">Tangan</div><div class="card-value" id="g-hand">–</div></div>
+  <div class="card"><div class="card-label">Audio</div><div class="card-value" id="g-audio">Diam</div></div>
+</div>
+
+<p class="section-title">&#127925; Gesture → Audio Mapping</p>
+<div class="mapping-table" id="mapping-table">
+  <div class="mapping-header">
+    <span></span><span>Gesture</span><span>File audio</span><span>Status</span>
+  </div>
+</div>
+
+<!-- Drag & drop untuk upload lokal -->
+<div class="drop-zone" id="drop-zone">
+  <p>&#128193; Drag &amp; drop file MP3/WAV ke sini (untuk test lokal)</p>
+  <small>Atau <label>pilih file<input type="file" id="bulk-input" multiple accept="audio/*" style="display:none"></label> — cocok otomatis ke gesture</small>
+</div>
+
+<p class="section-title">&#9881; Pengaturan</p>
+<div class="settings-box">
+  <div class="srow">
+    <span class="slabel">Tahan gesture (ms):</span>
+    <input type="range" id="hold-slider" min="200" max="2000" step="100" value="800">
+    <span class="sval" id="hold-val">800ms</span>
+  </div>
+  <div class="srow">
+    <span class="slabel">Cooldown (detik):</span>
+    <input type="range" id="cool-slider" min="1" max="10" step="0.5" value="3">
+    <span class="sval" id="cool-val">3.0s</span>
+  </div>
+  <div class="srow">
+    <span class="slabel">Volume:</span>
+    <input type="range" id="vol-slider" min="0" max="1" step="0.05" value="1">
+    <span class="sval" id="vol-val">100%</span>
+  </div>
+</div>
+
+<!-- Info folder -->
+<div class="info-box">
+  <p>
+    &#128193; <strong style="color:#6cba8a">Struktur folder untuk GitHub Pages:</strong><br>
+    Letakkan file audio di folder <code>audio/</code> dengan nama sesuai tabel di atas.<br>
+    Contoh: <code>audio/buka-penuh.mp3</code> &nbsp;|&nbsp; <code>audio/kicaumania.mp3</code> &nbsp;|&nbsp; <code>audio/jempol.mp3</code><br><br>
+    File yang sudah ada di server akan otomatis terdeteksi (hijau ✓).<br>
+    File belum ada akan ditandai merah — bisa diisi via drag &amp; drop di atas untuk test lokal.
+  </p>
+</div>
+
+<p class="hint">Tahan gesture selama waktu yang diatur sebelum audio berbunyi.<br>Format didukung: MP3, WAV, OGG, M4A.</p>
+
+<script>
+// ─── Konfigurasi gesture & file audio ────────────────────────────
+// Kolom `file`: path relatif dari folder audio/ di server (GitHub Pages)
+// Kolom `keywords`: dipakai untuk auto-match saat drag & drop
+const GESTURES = [
+  { name:'Buka Penuh',       icon:'✋', file:'audio/buka-penuh.mp3',  keywords:['buka','penuh','open','halo'] },
+  { name:'Kepalan',          icon:'✊', file:'audio/kepalan.mp3',      keywords:['kepalan','fist','tinju'] },
+  { name:'Satu Jari',        icon:'☝️', file:'audio/satu-jari.mp3',   keywords:['satu','one','point'] },
+  { name:'Dua Jari / Peace', icon:'✌️', file:'audio/peace.mp3',       keywords:['dua','peace','kicau','two','victory'] },
+  { name:'Tiga Jari',        icon:'🤟', file:'audio/tiga-jari.mp3',   keywords:['tiga','three'] },
+  { name:'Empat Jari',       icon:'🖖', file:'audio/empat-jari.mp3',  keywords:['empat','four'] },
+  { name:'OK',               icon:'👌', file:'audio/ok.mp3',          keywords:['ok','okay','oke'] },
+  { name:'Jempol',           icon:'👍', file:'audio/jempol.mp3',      keywords:['jempol','thumb','bagus','up'] },
+  { name:'Jempol Bawah',     icon:'👎', file:'audio/jempol-bawah.mp3',keywords:['bawah','down','turun'] },
+  { name:'Pinch',            icon:'🤌', file:'audio/pinch.mp3',       keywords:['pinch','sempurna','cubit'] },
+];
+
+// audioMap: name → { url, filename, source }
+// source: 'server' | 'local'
+const audioMap = {};
+
+// ─── Pre-check & build table ──────────────────────────────────────
+const table = document.getElementById('mapping-table');
+
+async function checkAndLoad() {
+  for (const g of GESTURES) {
+    const row = document.createElement('div');
+    row.className = 'mapping-row';
+    row.id = 'row-' + g.name;
+    row.dataset.gesture = g.name;
+
+    const dot = document.createElement('span');
+    dot.className = 'status-dot';
+    dot.id = 'dot-' + g.name;
+
+    const fileLabel = document.createElement('span');
+    fileLabel.className = 'g-file waiting';
+    fileLabel.id = 'file-' + g.name;
+    fileLabel.textContent = g.file;
+
+    row.innerHTML = `<span class="g-icon">${g.icon}</span><span class="g-name">${g.name}</span>`;
+    row.appendChild(fileLabel);
+    row.appendChild(dot);
+    table.appendChild(row);
+
+    // Try to fetch the server file (works on GitHub Pages / any web server)
+    try {
+      const res = await fetch(g.file, { method: 'HEAD' });
+      if (res.ok) {
+        audioMap[g.name] = { url: g.file, filename: g.file.split('/').pop(), source: 'server' };
+        fileLabel.className = 'g-file loaded';
+        fileLabel.textContent = '✓ ' + g.file.split('/').pop();
+        dot.classList.add('ok');
+      } else {
+        throw new Error('not found');
+      }
+    } catch {
+      fileLabel.className = 'g-file missing';
+      fileLabel.textContent = '✗ ' + g.file + ' (belum ada)';
+      dot.classList.add('err');
+    }
+  }
+}
+
+checkAndLoad();
+
+// ─── Drag & drop / bulk upload (override / local test) ───────────
+function assignLocalFile(gestureName, file) {
+  const url = URL.createObjectURL(file);
+  audioMap[gestureName] = { url, filename: file.name, source: 'local' };
+  const lbl = document.getElementById('file-' + gestureName);
+  const dot = document.getElementById('dot-' + gestureName);
+  lbl.className = 'g-file loaded';
+  lbl.textContent = '✓ ' + file.name + ' (lokal)';
+  dot.className = 'status-dot ok';
+}
+
+function autoMatch(file) {
+  const fname = file.name.toLowerCase();
+  for (const g of GESTURES) {
+    for (const kw of g.keywords) {
+      if (fname.includes(kw)) { assignLocalFile(g.name, file); return true; }
+    }
+  }
+  return false;
+}
+
+document.getElementById('bulk-input').addEventListener('change', e => {
+  [...e.target.files].forEach(autoMatch);
+});
+
+const dropZone = document.getElementById('drop-zone');
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault(); dropZone.classList.remove('drag-over');
+  [...e.dataTransfer.files].forEach(autoMatch);
+});
+
+// ─── Settings ─────────────────────────────────────────────────────
+let HOLD_MS  = 800;
+let COOLDOWN = 3000;
+let VOLUME   = 1;
+
+document.getElementById('hold-slider').addEventListener('input', e => {
+  HOLD_MS = +e.target.value;
+  document.getElementById('hold-val').textContent = HOLD_MS + 'ms';
+});
+document.getElementById('cool-slider').addEventListener('input', e => {
+  COOLDOWN = +e.target.value * 1000;
+  document.getElementById('cool-val').textContent = (+e.target.value).toFixed(1) + 's';
+});
+document.getElementById('vol-slider').addEventListener('input', e => {
+  VOLUME = +e.target.value;
+  document.getElementById('vol-val').textContent = Math.round(VOLUME * 100) + '%';
+  if (currentAudio) currentAudio.volume = VOLUME;
+});
+
+// ─── Audio ────────────────────────────────────────────────────────
+let currentAudio = null;
+let lastSpoke    = {};
+let isPlaying    = false;
+
+const bubble = document.getElementById('speech-bubble');
+const gAudio = document.getElementById('g-audio');
+
+function playGesture(gestureName) {
+  const entry = audioMap[gestureName];
+  if (!entry) return;
+  const now = Date.now();
+  if (lastSpoke[gestureName] && now - lastSpoke[gestureName] < COOLDOWN) return;
+  if (isPlaying) return;
+  lastSpoke[gestureName] = now;
+
+  if (currentAudio) { currentAudio.pause(); currentAudio.currentTime = 0; }
+
+  const audio = new Audio(entry.url);
+  audio.volume = VOLUME;
+  currentAudio = audio;
+
+  audio.onplay = () => {
+    isPlaying = true;
+    gAudio.textContent   = '▶ ' + entry.filename;
+    bubble.textContent   = '♪  ' + entry.filename;
+    bubble.style.display = 'block';
+  };
+  audio.onended = audio.onerror = () => {
+    isPlaying = false;
+    gAudio.textContent = 'Diam';
+    setTimeout(() => { bubble.style.display = 'none'; }, 600);
+  };
+  audio.play().catch(() => { isPlaying = false; gAudio.textContent = 'Error play'; });
+}
+
+// ─── MediaPipe ────────────────────────────────────────────────────
+const video      = document.getElementById('video');
+const canvas     = document.getElementById('canvas');
+const ctx        = canvas.getContext('2d');
+const overlay    = document.getElementById('overlay');
+const startBtn   = document.getElementById('start-btn');
+const loadingMsg = document.getElementById('loading-msg');
+const gGesture   = document.getElementById('g-gesture');
+const gFingers   = document.getElementById('g-fingers');
+const gHand      = document.getElementById('g-hand');
+const fpsBadge   = document.getElementById('fps-badge');
+const handsBadge = document.getElementById('hands-badge');
+
+let lastTime = performance.now(), frameCount = 0;
+let lastGesture = '', gestureSince = 0;
+
+function dist(a,b){ return Math.hypot(a.x-b.x, a.y-b.y); }
+function ext(lm,tip,pip){ return lm[tip].y < lm[pip].y; }
+
+function classify(lm) {
+  const thumbUp   = lm[4].y < lm[3].y && lm[4].y < lm[2].y;
+  const thumbDown = lm[4].y > lm[3].y && lm[4].y > lm[0].y + 0.05;
+  const idx=ext(lm,8,6), mid=ext(lm,12,10), rng=ext(lm,16,14), pnk=ext(lm,20,18);
+  const count=[idx,mid,rng,pnk].filter(Boolean).length;
+  const pd=dist(lm[4],lm[8]);
+  if(pd<0.06&&!mid&&!rng&&!pnk)         return{name:'Pinch',count:0};
+  if(!idx&&!mid&&!rng&&!pnk&&thumbUp)   return{name:'Jempol',count:1};
+  if(!idx&&!mid&&!rng&&!pnk&&thumbDown) return{name:'Jempol Bawah',count:1};
+  if(!idx&&!mid&&!rng&&!pnk)            return{name:'Kepalan',count:0};
+  if(idx&&mid&&rng&&pnk)                return{name:'Buka Penuh',count:4};
+  if(idx&&!mid&&!rng&&!pnk)             return{name:'Satu Jari',count:1};
+  if(idx&&mid&&!rng&&!pnk)              return{name:'Dua Jari / Peace',count:2};
+  if(idx&&mid&&rng&&!pnk)               return{name:'Tiga Jari',count:3};
+  if(!idx&&mid&&rng&&pnk)               return{name:'Empat Jari',count:4};
+  if(pd<0.09&&!mid&&!rng&&!pnk)         return{name:'OK',count:0};
+  return{name:count+' Jari',count};
+}
+
+function highlightRow(name) {
+  document.querySelectorAll('.mapping-row').forEach(el => {
+    el.classList.toggle('active', el.dataset.gesture === name);
+  });
+}
+
+function onResults(results) {
+  frameCount++;
+  const now = performance.now();
+  if (now - lastTime > 1000) {
+    fpsBadge.textContent = Math.round(frameCount*1000/(now-lastTime)) + ' fps';
+    frameCount = 0; lastTime = now;
+  }
+
+  canvas.width  = video.videoWidth  || 640;
+  canvas.height = video.videoHeight || 480;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  if (results.multiHandLandmarks?.length) {
+    handsBadge.textContent = results.multiHandLandmarks.length + ' tangan';
+
+    results.multiHandLandmarks.forEach((lm, i) => {
+      const side = results.multiHandedness[i].label;
+      const g    = classify(lm);
+
+      drawConnectors(ctx, lm, HAND_CONNECTIONS, {color:'#4FC3F7', lineWidth:2});
+      drawLandmarks(ctx, lm, {color:'#E91E63', lineWidth:1, radius:4});
+
+      const x = lm[0].x * canvas.width, y = lm[0].y * canvas.height;
+      ctx.save(); ctx.scale(-1,1);
+      ctx.font='bold 14px sans-serif';
+      ctx.strokeStyle='rgba(0,0,0,0.8)'; ctx.lineWidth=3; ctx.fillStyle='#fff';
+      const lbl = (side==='Right'?'Kiri':'Kanan') + ' · ' + g.name;
+      ctx.strokeText(lbl,-(x+10),y-10); ctx.fillText(lbl,-(x+10),y-10);
+      ctx.restore();
+
+      // Progress arc
+      if (i===0 && audioMap[g.name] && g.name===lastGesture) {
+        const pct = Math.min((Date.now()-gestureSince)/HOLD_MS, 1);
+        const cx  = canvas.width - lm[0].x*canvas.width;
+        const cy  = lm[0].y*canvas.height;
+        ctx.beginPath();
+        ctx.arc(cx, cy-36, 14, -Math.PI/2, -Math.PI/2+pct*Math.PI*2);
+        ctx.strokeStyle = pct>=1 ? '#4caf7d' : '#4a7fc1';
+        ctx.lineWidth=3; ctx.lineCap='round'; ctx.stroke();
+      }
+
+      if (i===0) {
+        gGesture.textContent = g.name;
+        gFingers.textContent = g.count;
+        gHand.textContent    = side==='Right'?'Kiri':'Kanan';
+        highlightRow(g.name);
+
+        if (g.name !== lastGesture) { lastGesture=g.name; gestureSince=Date.now(); }
+        else if (Date.now()-gestureSince >= HOLD_MS) playGesture(g.name);
+      }
+    });
+  } else {
+    handsBadge.textContent='0 tangan';
+    gGesture.textContent='–'; gFingers.textContent='–'; gHand.textContent='–';
+    lastGesture=''; highlightRow('');
+  }
+}
+
+startBtn.addEventListener('click', async () => {
+  startBtn.style.display  = 'none';
+  loadingMsg.style.display = 'block';
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({video:{width:640,height:480,facingMode:'user'}});
+    video.srcObject = stream;
+
+    const hands = new Hands({locateFile:f=>`https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`});
+    hands.setOptions({maxNumHands:2, modelComplexity:1, minDetectionConfidence:0.7, minTrackingConfidence:0.5});
+    hands.onResults(onResults);
+
+    const camera = new Camera(video, {
+      onFrame: async()=>{ await hands.send({image:video}); },
+      width:640, height:480
+    });
+    camera.start();
+
+    loadingMsg.style.display='none';
+    overlay.style.display='none';
+    fpsBadge.style.display='';
+    handsBadge.style.display='';
+  } catch(e) {
+    loadingMsg.textContent = 'Error: ' + e.message;
+  }
+});
+</script>
+</body>
+</html>
